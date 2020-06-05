@@ -66,6 +66,7 @@ from boto.exception import AWSConnectionError
 from boto.exception import BotoClientError
 from boto.exception import BotoServerError
 from boto.exception import PleaseRetryException
+from boto.exception import S3ResponseError
 from boto.provider import Provider
 from boto.resultset import ResultSet
 
@@ -1062,16 +1063,112 @@ class AWSAuthConnection(object):
         return HTTPRequest(method, self.protocol, host, self.port,
                            path, auth_path, params, headers, data)
 
+    def _get_xml_field(self, field, text):
+        """Get the contents of an XML tag."""
+        match = re.search("<%s>(.*)</%s>" % (field, field), text)
+        if match and match.group(1):
+            return match.group(1)
+
+    def _get_s3_region_from_body(self, body):
+        """If possible, return the correct region from a response body."""
+        code = self._get_xml_field('Code', body)
+        if code == 'AuthorizationHeaderMalformed':
+            return self._get_xml_field('Region', body)
+        elif code == 'PermanentRedirect':
+            endpoint = self._get_xml_field('Endpoint', body)
+            if endpoint:
+                region_regex = 's3\.(.*)\.amazonaws\.com'
+                correct_region = re.findall(region_regex, endpoint)
+                if len(correct_region) > 0:
+                    return correct_region[-1]
+
+    def _get_correct_s3_region(self, host, body, get_header=None):
+        """Try getting the correct region for accessing s3 from a response.
+
+        We look for information about the correct region in:
+        1. The response headers,
+        2. The error message itself, and
+        3. The headers of a bucket HEAD request, as a last resort.
+        """
+        if callable(get_header):
+            region = get_header('x-amz-bucket-region')
+            if region:
+                return region
+
+        if body:
+            if isinstance(body, bytes):
+                body = body.decode('utf-8')
+            region = self._get_s3_region_from_body(body)
+            if region:
+                return region
+
+        bucket_request = self.build_base_http_request('HEAD', '', '',
+                                                      {}, None, '', host)
+        bucket_head_response = self._mexe(bucket_request, None, None)
+        return bucket_head_response.getheader('x-amz-bucket-region')
+
+    def _fix_host_region(self, host, correct_region):
+        """Insert a new region into an s3 host."""
+        host_list = host.split('.')
+        if host.endswith('s3.amazonaws.com'):
+            host_list.insert(-2, correct_region)
+        else:
+            host_list[-3] = correct_region
+        return '.'.join(host_list)
+
     def make_request(self, method, path, headers=None, data='', host=None,
                      auth_path=None, sender=None, override_num_retries=None,
                      params=None, retry_handler=None):
-        """Makes a request to the server, with stock multiple-retry logic."""
+        """Make a request to the server.
+
+        Includes logic for retrying on s3 region errors.
+        """
         if params is None:
             params = {}
         http_request = self.build_base_http_request(method, path, auth_path,
                                                     params, headers, data, host)
-        return self._mexe(http_request, sender, override_num_retries,
-                          retry_handler=retry_handler)
+        response, err = None, None
+        try:
+            response = self._mexe(http_request, sender, override_num_retries,
+                                  retry_handler=retry_handler)
+            status = response.status
+        except S3ResponseError as e:
+            # Unfortunately sender functions passed into _mexe often call
+            # connection.getresponse directly, and raise their own exceptions
+            # if a request fails. See _send_file_internal in s3/key.py. The
+            # exception can contain information useful for a retry, however,
+            # so it needs to be in scope for the retry logic below.
+            err = e
+            status = e.status
+
+        if host.endswith('amazonaws.com') and status in [301, 400]:
+            region = None
+            if response:
+                region = self._get_correct_s3_region(
+                    host,
+                    response.read(),
+                    get_header=response.getheader
+                )
+            elif err:
+                region = self._get_correct_s3_region(host, err.body)
+
+            if region:
+                self.host = 's3.%s.amazonaws.com' % region
+                http_request.host = self._fix_host_region(host, region)
+                return self._mexe(http_request, sender, override_num_retries,
+                                  retry_handler=retry_handler)
+
+        if response:
+            # Note: a response returned here will not be readable by
+            # response.read(amt) if its status code is 301 or 400. This is
+            # because HTTPResponse.read(amt) does not return bytes after a
+            # response has been read for the first time, unlike the
+            # implementation above of HTTPResponse.read() with no arguments.
+            # Make sure to check for a non-error status code before calling
+            # response.read(amt)!
+            return response
+        elif err:
+            raise err
 
     def close(self):
         """(Optional) Close any open HTTP connections.  This is non-destructive,
