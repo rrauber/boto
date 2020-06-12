@@ -1153,7 +1153,15 @@ class AWSAuthConnection(object):
                 region = self._get_correct_s3_region(host, err.body)
 
             if region:
-                self.host = 's3.%s.amazonaws.com' % region
+                new_host = 's3.%s.amazonaws.com' % region
+                msg = 'S3 client configured to use host %s, but the' % self.host
+                msg += 'bucket you are trying to access is in %s. ' % region
+                msg += 'Please change your configuration to use %s ' % new_host
+                msg += 'to avoid multiple unnecessary redirects '
+                msg += 'and signing attempts.'
+                boto.log.debug(msg)
+
+                self.host = new_host
                 http_request.host = self._fix_host_region(host, region)
                 return self._mexe(http_request, sender, override_num_retries,
                                   retry_handler=retry_handler)
