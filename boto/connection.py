@@ -1066,7 +1066,7 @@ class AWSAuthConnection(object):
     def _get_xml_field(self, field, text):
         """Get the contents of an XML tag."""
         match = re.search("<%s>(.*)</%s>" % (field, field), text)
-        if match and match.group(1):
+        if match:
             return match.group(1)
 
     def _get_s3_region_from_body(self, body):
@@ -1081,6 +1081,14 @@ class AWSAuthConnection(object):
                 correct_region = re.findall(region_regex, endpoint)
                 if len(correct_region) > 0:
                     return correct_region[-1]
+        elif code == 'InvalidLocationConstraint':
+            return self._get_xml_field('LocationConstraint', body)
+        elif code == 'IllegalLocationConstraintException':
+            region_regex = 'The (.*?) location'
+            match = re.search(region_regex)
+            if match:
+                return match.group(1)
+            
 
     def _get_correct_s3_region(self, host, body, get_header=None):
         """Try getting the correct region for accessing s3 from a response.
@@ -1154,8 +1162,8 @@ class AWSAuthConnection(object):
 
             if region:
                 new_host = 's3.%s.amazonaws.com' % region
-                msg = 'S3 client configured to use host %s, but the' % self.host
-                msg += 'bucket you are trying to access is in %s. ' % region
+                msg = 'S3 client configured to use host %s, but ' % self.host
+                msg += 'the bucket you are trying to access is in %s. ' % region
                 msg += 'Please change your configuration to use %s ' % new_host
                 msg += 'to avoid multiple unnecessary redirects '
                 msg += 'and signing attempts.'
