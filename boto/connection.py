@@ -1069,7 +1069,7 @@ class AWSAuthConnection(object):
         if match:
             return match.group(1)
 
-    def _get_s3_region_from_body(self, body):
+    def _get_s3_region_from_response_body(self, body):
         code = self._get_xml_field('Code', body)
         if code == 'AuthorizationHeaderMalformed':
             return self._get_xml_field('Region', body)
@@ -1081,13 +1081,17 @@ class AWSAuthConnection(object):
             if match and match.group(1) != 'unspecified':
                 return match.group(1)
 
-    def _get_s3_endpoint_from_body(self, body):
+    def _get_s3_endpoint_from_response_body(self, body):
         code = self._get_xml_field('Code', body)
         if code == 'PermanentRedirect':
             endpoint = self._get_xml_field('Endpoint', body)
             return endpoint
 
     def _get_s3_host(self, endpoint):
+        # An s3 endpoint is of the form bucket-name.s3(.{region}).amazonaws.com,
+        # where the host is everything after "s3.". Note that "s3." can also
+        # appear in bucket-name, so we need to find the last occurrence of
+        # "s3." to find the host.
         ix = endpoint.rfind('s3.')
         if ix != -1:
             return endpoint[ix:]
@@ -1100,9 +1104,6 @@ class AWSAuthConnection(object):
     def _fix_s3_endpoint_region(self, endpoint, correct_region):
         """Return a new bucket endpoint that uses correct_region.
         Return None if host substitution is not possible.
-
-        endpoint is a string of the form
-        bucket-name.s3(.{region}).amazonaws.com
         """
         new_host = 's3.%s.amazonaws.com' % correct_region
         new_endpoint = self._change_s3_host(endpoint, new_host)
@@ -1110,8 +1111,8 @@ class AWSAuthConnection(object):
             return new_endpoint
         boto.log.debug('Could not change s3 host for %s' % endpoint)
 
-    def _get_s3_endpoint_in_correct_region(self, request,
-                                            body, get_header):
+    def _get_correct_s3_endpoint_from_response(self, request,
+                                               body, get_header):
         """Attempt to return a new s3 endpoint using the correct region to
         access a bucket. Return None if a retry is not possible."""
 
@@ -1127,7 +1128,7 @@ class AWSAuthConnection(object):
             if isinstance(body, bytes):
                 body = body.decode('utf-8')
 
-            region = self._get_s3_region_from_body(body)
+            region = self._get_s3_region_from_response_body(body)
             if region:
                 boto.log.debug('Got correct region from response body.')
                 return self._fix_s3_endpoint_region(request.host, region)
@@ -1136,12 +1137,12 @@ class AWSAuthConnection(object):
             # but we still need to get information from the response body
             # because if we're handling an exception the headers are not
             # available.
-            new_endpoint = self._get_s3_endpoint_from_body(body)
+            new_endpoint = self._get_s3_endpoint_from_response_body(body)
             if new_endpoint:
                 boto.log.debug('Got correct endpoint from response body.')
                 return new_endpoint
 
-        # 3. last resort: send another request.
+        # 3. Last resort: send another request.
         boto.log.debug('Sending a bucket HEAD request to get correct region.')
         req = self.build_base_http_request('HEAD', 
                                            '', '', {}, None, '',
@@ -1152,8 +1153,8 @@ class AWSAuthConnection(object):
             boto.log.debug('Got correct region from a bucket head request.')
             return self._fix_s3_endpoint_region(request.host, region)
 
-    def _change_s3_request_region(self, request, body, get_header=None):
-        new_endpoint = self._get_s3_endpoint_in_correct_region(
+    def _change_s3_host_from_response(self, request, body, get_header=None):
+        new_endpoint = self._get_correct_s3_endpoint_from_response(
             request,
             body,
             get_header
@@ -1177,19 +1178,19 @@ class AWSAuthConnection(object):
         boto.log.debug(msg)
         return request
 
-    def _get_request_for_s3_region_retry(self, http_request, response, err):
+    def _get_request_for_s3_retry(self, http_request, response, err):
         status = (response or err).status
         if http_request.host.endswith('amazonaws.com') and status in [301, 400]:
             if response:
                 boto.log.debug('Retrying using information in a response.')
-                return self._change_s3_request_region(
+                return self._change_s3_host_from_response(
                     http_request,
                     response.read(),
                     get_header=response.getheader
                 )
             elif err:
                 boto.log.debug('Retrying using information in an exception.')
-                return self._change_s3_request_region(
+                return self._change_s3_host_from_response(
                     http_request,
                     err.body
                 )
@@ -1216,7 +1217,7 @@ class AWSAuthConnection(object):
             # so it needs to be in scope for the retry logic below.
             err = e
 
-        retry_request = self._get_request_for_s3_region_retry(
+        retry_request = self._get_request_for_s3_retry(
             http_request,
             response,
             err
@@ -1228,7 +1229,7 @@ class AWSAuthConnection(object):
         if response:
             # Note: a response returned here will not be readable using
             # response.read(amt) if it came from an s3 request and its status
-            # code is 301 or 400. This is because _get_request_for_s3_region_retry
+            # code is 301 or 400. This is because _get_request_for_s3_retry
             # calls response.read() under these conditions, and
             # response.read(amt) does not return bytes after read has been
             # called once. Make sure to check for a non-error status code before
