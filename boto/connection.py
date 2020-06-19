@@ -1063,18 +1063,24 @@ class AWSAuthConnection(object):
         return HTTPRequest(method, self.protocol, host, self.port,
                            path, auth_path, params, headers, data)
 
-    def _get_s3_host(self, endpoint):
+    def _find_s3_host(self, endpoint):
         # An s3 endpoint is of the form bucket-name.s3(.{region}).amazonaws.com,
-        # where the host is everything after "s3.". Note that "s3." can also
-        # appear in bucket-name, so we need to find the last occurrence of
-        # "s3." to find the host.
-        ix = endpoint.rfind('s3.')
-        if ix != -1:
+        # where the host is everything after "bucket-name." Note that ".s3." 
+        # can also appear in bucket-name, so we need to find the last
+        # occurrence of ".s3." to find the host.
+        ix = endpoint.rfind('.s3.')
+        if ix == -1:
+            return None
+        return ix + 1
+
+    def _get_s3_host(self, endpoint):
+        ix = self._find_s3_host(endpoint)
+        if ix:
             return endpoint[ix:]
     
     def _change_s3_host(self, endpoint, new_host):
-        ix = endpoint.rfind('s3.')
-        if ix != -1:
+        ix = self._find_s3_host(endpoint)
+        if ix:
             return endpoint[:ix] + new_host
 
     def _fix_s3_endpoint_region(self, endpoint, correct_region):
