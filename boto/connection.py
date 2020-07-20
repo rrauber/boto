@@ -1107,10 +1107,13 @@ class AWSAuthConnection(object):
 
         # 2. Look in the response body.
         if err.region:
-            boto.log.debug('Got correct region from response body.')
+            boto.log.debug('Got correct region from parsed xml in err.region.')
             return self._fix_s3_endpoint_region(request.host, err.region)
         elif err.error_code == 'IllegalLocationConstraintException':
-            region_regex = 'The (.*?) location'
+            region_regex = (
+                'The (.*?) location constraint is incompatible for the region '
+                'specific endpoint this request was sent to.'
+            )
             match = re.search(region_regex, err.body)
             if match and match.group(1) != 'unspecified':
                 region = match.group(1)
@@ -1122,9 +1125,8 @@ class AWSAuthConnection(object):
 
         # 3. Last resort: send another request.
         boto.log.debug('Sending a bucket HEAD request to get correct region.')
-        req = self.build_base_http_request('HEAD', 
-                                           '', '', {}, None, '',
-                                           request.host)
+        req = self.build_base_http_request(
+            'HEAD', '', '', {}, None, '', request.host)
         bucket_head_response = self._mexe(req, None, None)
         region = bucket_head_response.getheader('x-amz-bucket-region')
         if region:
