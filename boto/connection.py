@@ -1065,7 +1065,7 @@ class AWSAuthConnection(object):
 
     def _find_s3_host(self, endpoint):
         # An s3 endpoint is of the form bucket-name.s3(.{region}).amazonaws.com,
-        # where the host is everything after "bucket-name." Note that ".s3." 
+        # where the host is everything after "bucket-name." Note that ".s3."
         # can also appear in bucket-name, so we need to find the last
         # occurrence of ".s3." to find the host.
         ix = endpoint.rfind('.s3.')
@@ -1077,7 +1077,7 @@ class AWSAuthConnection(object):
         ix = self._find_s3_host(endpoint)
         if ix:
             return endpoint[ix:]
-    
+
     def _change_s3_host(self, endpoint, new_host):
         ix = self._find_s3_host(endpoint)
         if ix:
@@ -1148,7 +1148,7 @@ class AWSAuthConnection(object):
 
         new_host = self._get_s3_host(new_endpoint)
         if new_host and new_host != self.host:
-            msg += 'This error may have arisen because your S3 host, ' 
+            msg += 'This error may have arisen because your S3 host, '
             msg += 'currently %s, is configured incorrectly. ' % self.host
             msg += 'Please change your configuration to use %s ' % new_host
             msg += 'to avoid multiple unnecessary redirects '
@@ -1186,7 +1186,7 @@ class AWSAuthConnection(object):
             params = {}
         http_request = self.build_base_http_request(method, path, auth_path,
                                                     params, headers, data, host)
-        response, err = None, None    
+        response, err = None, None
         try:
             response = self._mexe(http_request, sender, override_num_retries,
                                   retry_handler=retry_handler)
@@ -1212,7 +1212,7 @@ class AWSAuthConnection(object):
         if response:
             # Note: a response returned here will not be readable using
             # response.read(amt) if it came from an s3 request and its status
-            # code is 301 or 400. This is because response.read() is called 
+            # code is 301 or 400. This is because response.read() is called
             # above under these conditions, and response.read(amt) does not
             # return bytes after read has been called once. Make sure to check
             # for a non-error status code before calling response.read(amt)!
