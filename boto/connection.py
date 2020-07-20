@@ -1207,7 +1207,7 @@ class AWSAuthConnection(object):
             )
             if retry_request:
                 return self._mexe(retry_request, sender, override_num_retries,
-                                retry_handler=retry_handler)
+                                  retry_handler=retry_handler)
 
         if response:
             # Note: a response returned here will not be readable using
