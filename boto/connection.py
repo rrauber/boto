@@ -1087,6 +1087,8 @@ class AWSAuthConnection(object):
         """Return a new bucket endpoint that uses correct_region.
         Return None if host substitution is not possible.
         """
+        if not (endpoint and correct_region):
+            return None
         new_host = 's3.%s.amazonaws.com' % correct_region
         new_endpoint = self._change_s3_host(endpoint, new_host)
         if new_endpoint:
@@ -1112,7 +1114,7 @@ class AWSAuthConnection(object):
         elif err.error_code == 'IllegalLocationConstraintException':
             region_regex = (
                 'The (.*?) location constraint is incompatible for the region '
-                'specific endpoint this request was sent to.'
+                'specific endpoint this request was sent to\.'
             )
             match = re.search(region_regex, err.body)
             if match and match.group(1) != 'unspecified':
@@ -1126,7 +1128,7 @@ class AWSAuthConnection(object):
         # 3. Last resort: send another request.
         boto.log.debug('Sending a bucket HEAD request to get correct region.')
         req = self.build_base_http_request(
-            'HEAD', '', '', {}, None, '', request.host)
+            'HEAD', '/', '/', {}, None, '', request.host)
         bucket_head_response = self._mexe(req, None, None)
         region = bucket_head_response.getheader('x-amz-bucket-region')
         if region:
@@ -1168,7 +1170,7 @@ class AWSAuthConnection(object):
             return self._change_s3_host_from_error(
                 http_request,
                 err,
-                response.getheader
+                get_header=response.getheader
             )
         elif err:
             return self._change_s3_host_from_error(
@@ -1199,6 +1201,7 @@ class AWSAuthConnection(object):
             err = e
 
         status = (response or err).status
+        boto.log.debug(http_request.host)
         if http_request.host.endswith('amazonaws.com') and status in [301, 400]:
             retry_request = self._get_request_for_s3_retry(
                 http_request,

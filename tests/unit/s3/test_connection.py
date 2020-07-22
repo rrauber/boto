@@ -397,5 +397,403 @@ class TestHeadBucket(AWSMockServiceTestCase):
         self.assertEqual(err.message, '')
 
 
+class TestGetS3Host(AWSMockServiceTestCase):
+    connection_class = S3Connection
+
+    def test_get_s3_host_no_region(self):
+        endpoint = 'a.s3.amazonaws.com'
+        host = self.service_connection._get_s3_host(endpoint)
+        self.assertEqual(host, 's3.amazonaws.com')
+
+    def test_get_s3_host_with_region(self):
+        endpoint = 'a.s3.us-east-2.amazonaws.com'
+        host = self.service_connection._get_s3_host(endpoint)
+        self.assertEqual(host, 's3.us-east-2.amazonaws.com')
+
+    def test_get_s3_host_multiple_s3_occurrences(self):
+        endpoint = 'a.s3.a.s3.amazonaws.com'
+        host = self.service_connection._get_s3_host(endpoint)
+        self.assertEqual(host, 's3.amazonaws.com')
+
+    def test_get_s3_host_s3_in_region(self):
+        endpoint = 'a.s3.asdf-s3.amazonaws.com'
+        host = self.service_connection._get_s3_host(endpoint)
+        self.assertEqual(host, 's3.asdf-s3.amazonaws.com')
+
+    def test_get_s3_host_no_s3(self):
+        endpoint = 'a.some-other-storage-service.com'
+        host = self.service_connection._get_s3_host(endpoint)
+        self.assertIsNone(host)
+
+
+class TestChangeS3Host(AWSMockServiceTestCase):
+    connection_class = S3Connection
+    new_host = 'test-host'
+
+    def test_change_s3_host_no_region(self):
+        endpoint = 'a.s3.amazonaws.com'
+        host = self.service_connection._change_s3_host(endpoint, self.new_host)
+        self.assertEqual(host, 'a.test-host')
+
+    def test_change_s3_host_with_region(self):
+        endpoint = 'a.s3.us-east-2.amazonaws.com'
+        host = self.service_connection._change_s3_host(endpoint, self.new_host)
+        self.assertEqual(host, 'a.test-host')
+
+    def test_change_s3_host_multiple_s3_occurrences(self):
+        endpoint = 'a.s3.a.s3.amazonaws.com'
+        host = self.service_connection._change_s3_host(endpoint, self.new_host)
+        self.assertEqual(host, 'a.s3.a.test-host')
+
+    def test_change_s3_host_s3_in_region(self):
+        endpoint = 'a.s3.asdf-s3.amazonaws.com'
+        host = self.service_connection._change_s3_host(endpoint, self.new_host)
+        self.assertEqual(host, 'a.test-host')
+
+    def test_get_s3_host_no_s3(self):
+        endpoint = 'a.some-other-storage-service.com'
+        host = self.service_connection._change_s3_host(endpoint, self.new_host)
+        self.assertIsNone(host)
+
+
+class TestFixS3EndpointRegion(AWSMockServiceTestCase):
+    connection_class = S3Connection
+
+    def test_fix_s3_endpoint_region_no_endpoint(self):
+        new_endpoint = self.service_connection._fix_s3_endpoint_region(
+            None, 'eu-west-1')
+        self.assertIsNone(new_endpoint)
+
+    def test_fix_s3_endpoint_region_no_region(self):
+        endpoint = 'a.s3.us-east-2.amazonaws.com'
+        new_endpoint = self.service_connection._fix_s3_endpoint_region(
+            endpoint, None)
+        self.assertIsNone(new_endpoint)
+
+    def test_fix_s3_endpoint_region_region_in_endpoint(self):
+        endpoint = 'a.s3.us-east-2.amazonaws.com'
+        new_region = 'ap-south-1'
+        new_endpoint = self.service_connection._fix_s3_endpoint_region(
+            endpoint, new_region)
+        self.assertEqual(new_endpoint, 'a.s3.ap-south-1.amazonaws.com')
+
+    def test_fix_s3_endpoint_region_no_region_in_endpoint(self):
+        endpoint = 'a.s3.amazonaws.com'
+        new_region = 'ap-south-1'
+        new_endpoint = self.service_connection._fix_s3_endpoint_region(
+            endpoint, new_region)
+        self.assertEqual(new_endpoint, 'a.s3.ap-south-1.amazonaws.com')
+
+    def test_fix_s3_endpoint_region_non_s3_endpoint(self):
+        endpoint = 'a.some-other-storage-service.com'
+        new_region = 'ap-south-1'
+        new_endpoint = self.service_connection._fix_s3_endpoint_region(
+            endpoint, new_region)
+        self.assertIsNone(new_endpoint)
+
+
+class TestGetCorrectS3EndpointFromResponse(AWSMockServiceTestCase):
+    connection_class = S3Connection
+
+    def setUp(self):
+        super(TestGetCorrectS3EndpointFromResponse, self).setUp()
+
+        # this function is really long and does not fit on one line below.
+        sc = self.service_connection
+        self.endpoint_alias = sc._get_correct_s3_endpoint_from_response
+
+    def build_request(self, method='HEAD', path='/', auth_path='/', params=None,
+                      headers=None, data=None, host=''):
+        """Add defaults for less noise in the tests."""
+        return self.service_connection.build_base_http_request(
+            method, path, auth_path,
+            params, headers, data, host)
+
+    def test_callable_get_header_has_region(self):
+        host = 'bucket.s3.amazonaws.com'
+        headers = {'x-amz-bucket-region': 'us-east-2'}
+        endpoint = self.endpoint_alias(
+            self.build_request(host=host),
+            S3ResponseError('status', 'reason'),
+            headers.get
+        )
+        self.assertEqual(endpoint, 'bucket.s3.us-east-2.amazonaws.com')
+
+    def test_callable_get_header_no_region_checks_error(self):
+        host = 'bucket.s3.amazonaws.com'
+        headers = {}
+        body = '<Region>us-east-2</Region>'
+        err = S3ResponseError(400, 'reason', body=body)
+        endpoint = self.endpoint_alias(
+            self.build_request(host=host),
+            err,
+            headers.get
+        )
+        self.assertEqual(endpoint, 'bucket.s3.us-east-2.amazonaws.com')
+
+    def test_uses_parsed_region(self):
+        host = 'bucket.s3.amazonaws.com'
+        body = '<Region>us-east-2</Region>'
+        err = S3ResponseError(400, 'reason', body=body)
+        endpoint = self.endpoint_alias(
+            self.build_request(host=host),
+            err,
+            None
+        )
+        self.assertEqual(endpoint, 'bucket.s3.us-east-2.amazonaws.com')
+
+    def test_uses_parsed_location_constraint(self):
+        host = 'bucket.s3.amazonaws.com'
+        body = '<LocationConstraint>us-east-2</LocationConstraint>'
+        err = S3ResponseError(400, 'reason', body=body)
+        endpoint = self.endpoint_alias(
+            self.build_request(host=host),
+            err,
+            None
+        )
+        self.assertEqual(endpoint, 'bucket.s3.us-east-2.amazonaws.com')
+
+    def test_illegal_constraint_exception_matches_regex(self):
+        host = 'bucket.s3.amazonaws.com'
+        body = (
+            '<Error><Code>IllegalLocationConstraintException</Code><Message>'
+            'The us-east-2 location constraint is incompatible for the region '
+            'specific endpoint this request was sent to.</Message><RequestId>'
+            'asdf</RequestId><HostId>asdf</HostId></Error>'
+        )
+        err = S3ResponseError(400, 'reason', body=body)
+        endpoint = self.endpoint_alias(
+            self.build_request(host=host),
+            err,
+            None
+        )
+        self.assertEqual(endpoint, 'bucket.s3.us-east-2.amazonaws.com')
+
+    def test_error_parsed_endpoint(self):
+        host = 'bucket.s3.amazonaws.com'
+        body = '<Endpoint>use-this-instead</Endpoint>'
+        err = S3ResponseError(400, 'reason', body=body)
+        endpoint = self.endpoint_alias(
+            self.build_request(host=host),
+            err,
+            None
+        )
+        self.assertEqual(endpoint, 'use-this-instead')
+
+    def test_illegal_constraint_exception_matches_regex_unspecified(self):
+        self.set_http_response(status_code=200)
+        host = 'bucket.s3.amazonaws.com'
+        body = (
+            '<Error><Code>IllegalLocationConstraintException</Code><Message>'
+            'The unspecified location constraint is incompatible for the '
+            'region specific endpoint this request was sent to.</Message>'
+            '<RequestId>asdf</RequestId><HostId>asdf</HostId></Error>'
+        )
+        err = S3ResponseError(400, 'reason', body=body)
+        endpoint = self.endpoint_alias(
+            self.build_request(host=host),
+            err,
+            None
+        )
+
+    def test_illegal_constraint_exception_does_not_match_regex(self):
+        self.set_http_response(status_code=200)
+        host = 'bucket.s3.amazonaws.com'
+        body = (
+            '<Error><Code>IllegalLocationConstraintException</Code><Message>'
+            'some string</Message><RequestId>asdf</RequestId><HostId>asdf'
+            '</HostId></Error>'
+        )
+        err = S3ResponseError(400, 'reason', body=body)
+        endpoint = self.endpoint_alias(
+            self.build_request(host=host),
+            err,
+            None
+        )
+
+    def test_bucket_head_request_has_region(self):
+        self.set_http_response(
+            status_code=200,
+            header=[('x-amz-bucket-region', 'us-east-2')]
+        )
+
+        host = 'bucket.s3.amazonaws.com'
+        err = S3ResponseError(400, 'reason')
+        endpoint = self.endpoint_alias(
+            self.build_request(host=host),
+            err,
+            None
+        )
+        self.assertEqual(endpoint, 'bucket.s3.us-east-2.amazonaws.com')
+
+    def test_bucket_head_request_does_not_have_region(self):
+        self.set_http_response(status_code=200)
+
+        host = 'bucket.s3.amazonaws.com'
+        err = S3ResponseError(400, 'reason')
+        endpoint = self.endpoint_alias(
+            self.build_request(host=host),
+            err,
+            None
+        )
+        self.assertIsNone(endpoint)
+
+
+class TestChangeS3HostFromError(AWSMockServiceTestCase):
+    connection_class = S3Connection
+
+    def setUp(self):
+        super(TestChangeS3HostFromError, self).setUp()
+        self.request = self.service_connection.build_base_http_request(
+            'GET', '/', '/',
+            None, None, '', 'bucket.s3.amazonaws.com')
+
+    def test_endpoint_not_none_changes_request(self):
+        correct_endpoint = 'bucket.s3.us-east-2.amazonaws.com'
+        self.service_connection._get_correct_s3_endpoint_from_response = (
+            lambda x, y, z: correct_endpoint
+        )
+
+        new_request = self.service_connection._change_s3_host_from_error(
+            self.request,
+            None
+        )
+
+        self.assertEqual(new_request.host, correct_endpoint)
+
+    def test_endpoint_none_returns_none(self):
+        self.service_connection._get_correct_s3_endpoint_from_response = (
+            lambda x, y, z: None
+        )
+
+        new_request = self.service_connection._change_s3_host_from_error(
+            self.request,
+            None
+        )
+
+        self.assertIsNone(new_request)
+
+
+class TestGetRequestForS3Retry(AWSMockServiceTestCase):
+    connection_class = S3Connection
+
+    def test_translate_response_to_error_with_body(self):
+        http_request = 'http_request'
+        body_bytes = b'<Error></Error>'
+        body_decoded = '<Error></Error>'
+        response = self.create_response(
+            400,
+            reason='reason',
+            header=[('test', 'header')],
+            body=body_bytes
+        )
+
+        def validate_function_args(request, error, get_header=None):
+            self.assertEqual(request, http_request)
+            self.assertEqual(response.status, error.status)
+            self.assertEqual(response.reason, error.reason)
+            self.assertEqual(body_decoded, error.body)
+            self.assertTrue(callable(get_header))
+
+        self.service_connection._change_s3_host_from_error = (
+            validate_function_args
+        )
+
+        self.service_connection._get_request_for_s3_retry(
+            http_request, response, None)
+
+    def test_translate_response_to_error_without_body(self):
+        http_request = 'http_request'
+        response = self.create_response(400, reason='reason')
+
+        def validate_function_args(request, error, get_header=None):
+            self.assertEqual(request, http_request)
+            self.assertEqual(response.status, error.status)
+            self.assertEqual(response.reason, error.reason)
+            self.assertTrue(callable(get_header))
+
+        self.service_connection._change_s3_host_from_error = (
+            validate_function_args
+        )
+
+        self.service_connection._get_request_for_s3_retry(
+            http_request, response, None)
+
+    def test_response_passes_error(self):
+        http_request = 'http_request'
+        err = S3ResponseError(400, 'reason', '<Error></Error>')
+
+        def validate_function_args(request, error, get_header=None):
+            self.assertEqual(request, http_request)
+            self.assertEqual(error, err)
+            self.assertFalse(callable(get_header))
+
+        self.service_connection._change_s3_host_from_error = (
+            validate_function_args
+        )
+
+        self.service_connection._get_request_for_s3_retry(
+            http_request, None, err)
+
+
+class TestMakeRequestRegionRetry(AWSMockServiceTestCase):
+    connection_class = S3Connection
+
+    def _mock_retry_request(self, request, response, error):
+        # for the methods that test the retry logic with a response, not an
+        # error, ensure future requests succeed. The functions testing the
+        # error logic overwrite this in _mexe_mock.
+        self.set_http_response(200)
+        return request
+
+    def setUp(self):
+        super(TestMakeRequestRegionRetry, self).setUp()
+
+        self.service_connection._get_request_for_s3_retry = (
+            self._mock_retry_request
+        )
+
+    def test_aws_response_retry_status_codes(self):
+        for code in [301, 400]:
+            self.set_http_response(code)
+            response = self.service_connection.make_request(
+                'HEAD', bucket='bucket')
+
+            self.assertEqual(response.status, 200)
+
+    def test_aws_response_other_status_no_retry(self):
+        self.set_http_response(404)
+        response = self.service_connection.make_request(
+            'HEAD', bucket='bucket')
+
+        self.assertEqual(response.status, 404)
+
+    def _mexe_mock(self, code):
+        def mock_function_using_code(*args, **kwargs):
+            # future, retried, calls should have a different status code
+            # so that whether or not a retry has occured is detectable.
+            self.service_connection._mexe = (
+                lambda *args, **kwargs: self.create_response(200)
+            )
+            raise S3ResponseError(code, 'reason')
+        return mock_function_using_code
+
+    def test_aws_exception_retry_status_code(self):
+        for code in [301, 400]:
+            self.service_connection._mexe = self._mexe_mock(code)
+
+            response = self.service_connection.make_request(
+                'HEAD', bucket='bucket')
+
+            self.assertEqual(response.status, 200)
+
+    def test_aws_exception_other_status_raises_error(self):
+        self.service_connection._mexe = self._mexe_mock(404)
+
+        with self.assertRaises(S3ResponseError):
+            response = self.service_connection.make_request(
+                'HEAD', bucket='bucket')
+
+
 if __name__ == "__main__":
     unittest.main()

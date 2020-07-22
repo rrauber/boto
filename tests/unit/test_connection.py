@@ -23,6 +23,7 @@ import os
 import socket
 
 from tests.compat import mock, unittest
+from tests.unit import AWSMockServiceTestCase
 from httpretty import HTTPretty
 
 from boto import UserAgent
