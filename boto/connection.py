@@ -1201,7 +1201,6 @@ class AWSAuthConnection(object):
             err = e
 
         status = (response or err).status
-        boto.log.debug(http_request.host)
         if http_request.host.endswith('amazonaws.com') and status in [301, 400]:
             retry_request = self._get_request_for_s3_retry(
                 http_request,
