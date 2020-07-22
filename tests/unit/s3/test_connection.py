@@ -749,12 +749,13 @@ class TestMakeRequestRegionRetry(AWSMockServiceTestCase):
     def setUp(self):
         super(TestMakeRequestRegionRetry, self).setUp()
 
+        self.retry_codes = [301, 400]
         self.service_connection._get_request_for_s3_retry = (
             self._mock_retry_request
         )
 
     def test_aws_response_retry_status_codes(self):
-        for code in [301, 400]:
+        for code in self.retry_codes:
             self.set_http_response(code)
             response = self.service_connection.make_request(
                 'HEAD', bucket='bucket')
@@ -768,6 +769,18 @@ class TestMakeRequestRegionRetry(AWSMockServiceTestCase):
 
         self.assertEqual(response.status, 404)
 
+    def test_retry_request_is_none_returns_original_response(self):
+        self.service_connection._get_request_for_s3_retry = (
+            lambda *args: None
+        )
+
+        for code in self.retry_codes:
+            self.set_http_response(code)
+            response = self.service_connection.make_request(
+                'HEAD', bucket='bucket')
+
+            self.assertEqual(response.status, code)
+
     def _mexe_mock(self, code):
         def mock_function_using_code(*args, **kwargs):
             # future, retried, calls should have a different status code
@@ -779,7 +792,7 @@ class TestMakeRequestRegionRetry(AWSMockServiceTestCase):
         return mock_function_using_code
 
     def test_aws_exception_retry_status_code(self):
-        for code in [301, 400]:
+        for code in self.retry_codes:
             self.service_connection._mexe = self._mexe_mock(code)
 
             response = self.service_connection.make_request(
@@ -793,6 +806,18 @@ class TestMakeRequestRegionRetry(AWSMockServiceTestCase):
         with self.assertRaises(S3ResponseError):
             response = self.service_connection.make_request(
                 'HEAD', bucket='bucket')
+
+    def test_retry_request_is_none_raises_original_error(self):
+        self.service_connection._get_request_for_s3_retry = (
+            lambda *args: None
+        )
+
+        for code in self.retry_codes:
+            self.service_connection._mexe = self._mexe_mock(code)
+
+            with self.assertRaises(S3ResponseError):
+                response = self.service_connection.make_request(
+                    'HEAD', bucket='bucket')
 
 
 if __name__ == "__main__":
