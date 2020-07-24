@@ -477,9 +477,7 @@ class TestMakeRequestRetriesWithCorrectHost(AWSMockServiceTestCase):
             mocked_mexe.side_effect = [error_response]
 
             response = self.connection.make_request(
-                'HEAD',
-                '/',
-                host=self.default_host)
+                'HEAD', '/', host=self.default_host)
 
             self.assertEqual(response, error_response)
             # called_once_with does not compare equality correctly with

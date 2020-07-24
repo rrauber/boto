@@ -1186,8 +1186,8 @@ class AWSAuthConnection(object):
         """
         if params is None:
             params = {}
-        http_request = self.build_base_http_request(method, path, auth_path,
-                                                    params, headers, data, host)
+        http_request = self.build_base_http_request(
+            method, path, auth_path, params, headers, data, host)
         response, err = None, None
         try:
             response = self._mexe(http_request, sender, override_num_retries,
