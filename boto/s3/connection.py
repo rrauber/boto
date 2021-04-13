@@ -446,6 +446,7 @@ class S3Connection(AWSAuthConnection):
     def get_all_buckets(self, headers=None):
         response = self.make_request('GET', headers=headers)
         body = response.read()
+        boto.log.debug(body)
         if response.status > 300:
             raise self.provider.storage_response_error(
                 response.status, response.reason, body)
